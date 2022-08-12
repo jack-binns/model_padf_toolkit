@@ -1,6 +1,8 @@
-import glob, os
-import numpy as np
+import glob
 import math as m
+import os
+
+import numpy as np
 from sklearn.cluster import KMeans
 
 import utils
@@ -8,13 +10,14 @@ import utils
 
 class XYZFile:
 
-    def __init__(self, root_dir='foo', input_file='foo', out_tag='foo', sub_dict={}):
+    def __init__(self, root_dir='foo', input_file='foo', out_tag='foo', sub_dict={}, drop_h=True):
         self.root_dir = root_dir
         self.input_file = input_file
         self.raw_file = []
         self.out_tag = out_tag
         self.atom_sub_dict = sub_dict
         self.output_file = self.generate_output_string()
+        self.drop_h = drop_h
         self.atom_num = 0
         self.internal_comments = []
         self.atom_list = []
@@ -72,12 +75,22 @@ class XYZFile:
             ls = line.split()
             if len(ls) == 4:
                 # it's an atom
-                self.atom_id_list.append(ls[0])
-                self.atom_z_list.append(utils.get_z(ls[0]))
-                raw_x.append(ls[1])
-                raw_y.append(ls[2])
-                raw_z.append(ls[3])
-                self.atom_list.append(ls)
+                if ls[0] != 'H':
+                    self.atom_id_list.append(ls[0])
+                    self.atom_z_list.append(utils.get_z(ls[0]))
+                    raw_x.append(ls[1])
+                    raw_y.append(ls[2])
+                    raw_z.append(ls[3])
+                    self.atom_list.append(ls)
+                elif ls[0] == 'H' and self.drop_h is False:
+                    self.atom_id_list.append(ls[0])
+                    self.atom_z_list.append(utils.get_z(ls[0]))
+                    raw_x.append(ls[1])
+                    raw_y.append(ls[2])
+                    raw_z.append(ls[3])
+                    self.atom_list.append(ls)
+                else:
+                    continue
         raw_x = [float(x) for x in raw_x]
         raw_y = [float(y) for y in raw_y]
         raw_z = [float(z) for z in raw_z]
@@ -256,11 +269,11 @@ class XYZFile:
         self.output_file = f'{base_split[0]}_sc{self.atom_num}.xyz'
         self.write_xyz_out()
 
-    def kmeans_fit(self, n_clusters=0):
+    def kmeans_fit(self, n_clusters=0, cartesian_list=[]):
         print("<xyz_handler.kmeans_fit> k-means clustering in progress")
         print(f"<xyz_handler.kmeans_fit> searching for {n_clusters} clusters")
         kmeans = KMeans(n_clusters=n_clusters)
-        kmeans.fit(self.cartesian_list)
+        kmeans.fit(cartesian_list)
         # y_kmeans = kmeans.predict(self.cartesian_atoms)
         kmeans_pixels = kmeans.cluster_centers_
         kmeans_labels = kmeans.labels_
@@ -270,14 +283,14 @@ class XYZFile:
         print(f'<xyz_handler.kmeans_fit> {len(kmeans_labels)=}')
         return kmeans_pixels, kmeans_labels
 
-    def label_kmeans_structure(self, pixels, labels, zmax=50):
+    def label_kmeans_structure(self, pixels, labels, zmax=50, atom_id_list=[]):
         kmeans_z_list = []
         scaled_kmeans_z_list = []
         for k, pixel in enumerate(pixels):
             z_total = 0.0
             for n, label in enumerate(labels):
                 if label == k:
-                    z_total += utils.get_z(self.atom_id_list[n])
+                    z_total += utils.get_z(atom_id_list[n])
             kmeans_z_list.append(z_total)
         kmeans_z_list = np.array(kmeans_z_list)
         max_k_z = np.max(kmeans_z_list)
@@ -307,12 +320,12 @@ class XYZFile:
 
 
 if __name__ == '__main__':
-    root = 'C:\\rmit\\dlc\\model_padf\\md\\'
-    xyz_file = root + '192DLC.xyz'
+    root = 'C:\\rmit\\dlc\\model_padf\\md\\192DLC_50ns\\'
+    xyz_file = root + '192DLC_50ns.xyz'
 
-    multi_state_xyz = XYZFile(root_dir=root, input_file=xyz_file, out_tag='_conv')
+    multi_state_xyz = XYZFile(root_dir=root, input_file=xyz_file, out_tag='_conv', drop_h=True)
 
-    multi_state_xyz.split_multiframe_xyz()
+    # multi_state_xyz.split_multiframe_xyz()
     dlc_a = 96.872
     dlc_b = 42.096
     dlc_c = 117.520
@@ -323,11 +336,13 @@ if __name__ == '__main__':
     # sub_dict = {'1': 'Al',
     #             '2': 'O'}
 
-    file_list = glob.glob(f"{root}\\192DLC\\*.xyz")
+    file_list = utils.sorted_nicely(glob.glob(f"{root}\\192DLC_50ns\\*.xyz"))
     print(file_list)
 
+    n_clusters = 300
+
     for k, xyz_file in enumerate(file_list[:]):
-        xyz = XYZFile(root_dir=f'{root}\\192DLC\\', input_file=xyz_file, out_tag=f'_sc')
+        xyz = XYZFile(root_dir=f'{root}\\192DLC_50ns\\', input_file=xyz_file, out_tag=f'_sc')
         xyz.a = dlc_a
         xyz.b = dlc_b
         xyz.c = dlc_c
@@ -342,6 +357,10 @@ if __name__ == '__main__':
         xyz.super_c_max = 1
         xyz.grok_raw_file()
         xyz.generate_supercell()
+        pix, labels = xyz.kmeans_fit(n_clusters=n_clusters, cartesian_list=xyz.supercell_atom_cart_list)
+        zs_labels = xyz.label_kmeans_structure(pixels=pix, labels=labels, atom_id_list=xyz.supercell_atom_id_list)
+        xyz.write_kmeansxyz_out(pixels=pix, scaled_labels=zs_labels,
+                                outpath=f"{root}\\192DLC_50ns\\192DLC_50ns_frame_{k}_sc_{n_clusters}.xyz")
 
     # root = 'C:\\rmit\\alox\\'
     # file_list = glob.glob(root + '*.xyz')
